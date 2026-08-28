@@ -84,7 +84,8 @@ The production-safeguards migration adds defense in depth around the service-lev
 - The private `test-evidence` Supabase Storage bucket permits only assignment-scoped uploads from
   an assigned tester while the assignment is active. Reads are limited to that tester and the
   campaign owner. There are no direct update or delete policies, so submitted evidence is
-  immutable through the browser.
+  immutable through the browser. Supabase manages `storage.objects` itself and creates it with RLS
+  enabled; the migration adds project policies without trying to alter that managed table.
 - The API applies separate configurable read/write fixed-window limits. The in-process limiter
   protects a single API process; production deployments with multiple workers should add a shared
   gateway or reverse-proxy limit.
@@ -96,4 +97,7 @@ The production-safeguards migration adds defense in depth around the service-lev
 Evidence object keys must be shaped as `<assignment-id>/<file-name>`. This matches the first-folder
 check in the Storage policies and prevents a tester from attaching an object belonging to another
 assignment. The migration is safe to run against the local SQLite test database: it adds the
-moderation columns there and skips PostgreSQL-only RLS and Storage statements.
+moderation columns there and skips PostgreSQL-only RLS and Storage statements. If the production
+connection role cannot create policies on Supabase's managed Storage table, the migration rolls
+back only that Storage savepoint, logs a warning, and leaves the rest of the migration applied.
+Run `docs/supabase-storage-policies.sql` in the Supabase SQL Editor in that case.

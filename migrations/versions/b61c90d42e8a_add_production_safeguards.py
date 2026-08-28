@@ -5,10 +5,12 @@ Revises: 7b3c2d1e9f04
 Create Date: 2026-08-28 12:00:00
 """
 
+import logging
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.exc import ProgrammingError
 
 revision: str = "b61c90d42e8a"
 down_revision: str | None = "7b3c2d1e9f04"
@@ -70,7 +72,9 @@ def _install_supabase_safeguards() -> None:
     if not _postgres_relation_exists("storage", "objects"):
         return
 
-    op.execute("ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY")
+    # Supabase owns this managed table with an internal role. Its Storage service creates
+    # storage.objects with RLS enabled, so do not issue ALTER TABLE as the application role.
+    # The policies below are the supported project-level control surface.
     op.execute("CREATE SCHEMA IF NOT EXISTS private")
     op.execute("REVOKE ALL ON SCHEMA private FROM PUBLIC")
     op.execute("GRANT USAGE ON SCHEMA private TO authenticated")
@@ -191,7 +195,24 @@ def upgrade() -> None:
         batch_op.create_index("ix_disputes_assigned_to", ["assigned_to"], unique=False)
 
     if op.get_bind().dialect.name == "postgresql":
-        _install_supabase_safeguards()
+        # Supabase's managed Storage tables may be owned by an internal role that is not
+        # available through the project's pooled DATABASE_URL. Keep the application migration
+        # usable in that case and apply docs/supabase-storage-policies.sql from the Supabase SQL
+        # Editor, which runs with the required Storage privileges.
+        try:
+            with op.get_bind().begin_nested():
+                _install_supabase_safeguards()
+        except ProgrammingError as exc:
+            message = str(exc.orig)
+            if (
+                "must be owner of table" not in message
+                and "permission denied for table" not in message
+            ):
+                raise
+            logging.getLogger("alembic.runtime.migration").warning(
+                "Supabase Storage policies were not installed by this database role. "
+                "Run docs/supabase-storage-policies.sql in the Supabase SQL Editor."
+            )
 
 
 def downgrade() -> None:

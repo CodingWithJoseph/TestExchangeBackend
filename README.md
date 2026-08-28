@@ -45,6 +45,11 @@ authorized application boundary. The private `test-evidence` Storage bucket allo
 tester to upload only while their assignment is active and lets only the tester or campaign owner
 read objects. Evidence keys must use `<assignment-id>/<file-name>`.
 
+Some Supabase connection strings use a role that cannot modify the managed `storage.objects`
+table. In that case the migration keeps the database changes and logs a warning; run
+`docs/supabase-storage-policies.sql` once in the Supabase SQL Editor to install the Storage
+policies.
+
 Set `MODERATOR_USER_IDS` to a comma-separated list of Supabase Auth user UUIDs before running the
 moderator API. This is a server-side allowlist; client-controlled profile or JWT metadata does not
 grant moderator access. Dispute resolution records a decision and does not move credits. A later
