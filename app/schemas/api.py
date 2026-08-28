@@ -172,6 +172,24 @@ class SubmissionRead(APIModel):
     items: list[EvidenceItemRead]
 
 
+class QualityCheckItem(APIModel):
+    code: str
+    label: str
+    status: Literal["passed", "flagged"]
+    detail: str
+
+
+class QualityCheckRead(APIModel):
+    submission_id: UUID
+    assignment_id: UUID
+    submission_version: int
+    submission_status: SubmissionStatus
+    status: Literal["ready_for_review", "needs_attention", "already_reviewed"]
+    score: int = Field(ge=0, le=100)
+    checks: list[QualityCheckItem]
+    disclaimer: str
+
+
 class MessageCreate(APIModel):
     body: str = Field(min_length=1, max_length=4000)
 
