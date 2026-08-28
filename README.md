@@ -23,11 +23,12 @@ sends the resulting access token as `Authorization: Bearer <token>`.
 
 - Profiles tied to the UUID in the Supabase JWT `sub` claim
 - Public software-testing campaigns across Android, iOS, web, desktop, API, and other platforms
-- Versioned testing contracts with required tasks and evidence rules
+- Versioned testing contracts with required tasks, private access instructions, and evidence rules
 - Tester applications and assignments with explicit state transitions
 - Versioned evidence submissions whose storage keys remain private
 - Private assignment conversations
 - Developer approval, rejection, and correction requests
+- Participant-only submission and review history endpoints for restoring workspaces after refresh
 - Credit accounts with row locking and an append-only ledger
 - Disputes and participant-visible audit history
 - Automatic private-beta starting credits, configurable with `SIGNUP_CREDIT_GRANT`
@@ -69,7 +70,8 @@ DATABASE_URL=postgresql://testexchange:testexchange@localhost:54322/testexchange
 2. Copy the project URL into `SUPABASE_URL`.
 3. Copy the PostgreSQL connection string into `DATABASE_URL`; keep `sslmode=require` for hosted
    Supabase connections.
-4. Set `CORS_ORIGINS` to a JSON list containing the deployed frontend origin.
+4. Set `CORS_ORIGINS` to a JSON list containing every frontend origin you use. `localhost`
+   and `127.0.0.1` are different browser origins during local development.
 5. Run `alembic upgrade head` against the Supabase database.
 6. Configure the frontend Supabase client and send its session access token to this API.
 

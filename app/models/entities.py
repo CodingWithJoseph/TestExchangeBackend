@@ -88,6 +88,7 @@ class TestingContract(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     version: Mapped[int] = mapped_column(Integer, default=1)
     tester_instructions: Mapped[str] = mapped_column(Text)
+    access_instructions: Mapped[str | None] = mapped_column(Text)
     device_requirements: Mapped[str | None] = mapped_column(Text)
     evidence_requirements: Mapped[str] = mapped_column(Text)
     review_window_hours: Mapped[int] = mapped_column(Integer, default=72)

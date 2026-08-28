@@ -33,6 +33,7 @@ def contract_response(db: DBSession, campaign_id: UUID) -> ContractRead:
         campaign_id=contract.campaign_id,
         version=contract.version,
         tester_instructions=contract.tester_instructions,
+        access_instructions=contract.access_instructions,
         device_requirements=contract.device_requirements,
         evidence_requirements=contract.evidence_requirements,
         review_window_hours=contract.review_window_hours,

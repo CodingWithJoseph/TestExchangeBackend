@@ -240,6 +240,31 @@ def get_submission(
     return submission, items
 
 
+def list_submissions(
+    db: Session, *, assignment_id: UUID, user_id: UUID
+) -> list[EvidenceSubmission]:
+    assignment = get_assignment(db, assignment_id)
+    require_assignment_participant(db, assignment, user_id)
+    return list(
+        db.scalars(
+            select(EvidenceSubmission)
+            .where(EvidenceSubmission.assignment_id == assignment_id)
+            .order_by(EvidenceSubmission.version.desc())
+        )
+    )
+
+
+def list_submission_reviews(db: Session, *, submission_id: UUID, user_id: UUID) -> list[Review]:
+    submission, _ = get_submission(db, submission_id=submission_id, user_id=user_id)
+    return list(
+        db.scalars(
+            select(Review)
+            .where(Review.submission_id == submission.id)
+            .order_by(Review.created_at, Review.id)
+        )
+    )
+
+
 def create_review(
     db: Session, *, submission_id: UUID, reviewer_id: UUID, payload: ReviewCreate
 ) -> Review:
