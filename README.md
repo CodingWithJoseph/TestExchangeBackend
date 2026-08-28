@@ -35,9 +35,13 @@ sends the resulting access token as `Authorization: Bearer <token>`.
 - Assignment-scoped evidence storage keys with private Supabase Storage policy support
 - Per-process read/write API rate limits with configurable windows and response headers
 - Automatic private-beta starting credits, configurable with `SIGNUP_CREDIT_GRANT`
+- Private, deterministic submission quality pre-checks that explain evidence gaps to reviewers
 
-The automated quality checker is intentionally not implemented here. A later AI pre-check may
-produce advice, but a developer or human moderator remains responsible for credit decisions.
+The quality pre-check is advisory and intentionally deterministic in this phase. The
+`GET /api/v1/submissions/{submission_id}/quality-check` endpoint reports required-task coverage,
+evidence content, summary specificity, and concrete observations. It never approves or rejects a
+submission and never transfers credits; the campaign owner or a human moderator remains
+responsible for that decision. A future AI provider can add more advice behind the same boundary.
 
 Production safeguards are applied by the latest Alembic migration. App tables are denied direct
 Supabase Data API access for `anon` and `authenticated`; the FastAPI service remains the

@@ -74,6 +74,24 @@ Anonymous routes return only `CampaignRead`, which contains the public recruitme
 contracts, evidence storage keys, messages, reviews, disputes, and audit events require a verified
 user who is either the campaign owner or the assigned tester.
 
+## Advisory submission quality pre-check
+
+`GET /api/v1/submissions/{submission_id}/quality-check` gives either participant a repeatable,
+private signal before a human reviews the submission. It reads the existing contract tasks and
+evidence rows, so it does not need another table or an asynchronous job. The response includes a
+score and four explainable checks:
+
+- required contract tasks have linked evidence;
+- every evidence item contains a file, link, or note;
+- the summary is long enough to describe a concrete result and avoids generic phrases; and
+- at least one evidence note records a reproducible observation.
+
+The result is `ready_for_review`, `needs_attention`, or `already_reviewed`. These labels are
+workflow guidance only. The service does not create a review, change an assignment, or write to
+the credit ledger. Keeping this boundary explicit means a future AI provider can add suggestions
+without becoming an unaccountable credit arbiter, and it keeps the first implementation easy to
+test in interviews.
+
 ## Production safeguards
 
 The production-safeguards migration adds defense in depth around the service-level checks:

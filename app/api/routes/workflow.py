@@ -17,6 +17,7 @@ from app.schemas.api import (
     EvidenceItemRead,
     MessageCreate,
     MessageRead,
+    QualityCheckRead,
     ReviewCreate,
     ReviewRead,
     SubmissionCreate,
@@ -28,6 +29,7 @@ from app.services.common import (
     list_assignment_audit,
     require_assignment_participant,
 )
+from app.services.quality import build_submission_quality_check
 from app.services.workflow import (
     accept_assignment,
     add_message,
@@ -127,6 +129,17 @@ def submit(
 @router.get("/submissions/{submission_id}", response_model=SubmissionRead)
 def submission(submission_id: UUID, user: AuthenticatedUser, db: DBSession) -> SubmissionRead:
     return submission_response(db, submission_id, user.id)
+
+
+@router.get(
+    "/submissions/{submission_id}/quality-check",
+    response_model=QualityCheckRead,
+    summary="Get an advisory quality check for a private submission",
+)
+def submission_quality_check(
+    submission_id: UUID, user: AuthenticatedUser, db: DBSession
+) -> QualityCheckRead:
+    return build_submission_quality_check(db, submission_id=submission_id, user_id=user.id)
 
 
 @router.get(
