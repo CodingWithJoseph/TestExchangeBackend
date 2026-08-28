@@ -36,6 +36,8 @@ from app.services.workflow import (
     create_submission,
     get_submission,
     list_messages,
+    list_submission_reviews,
+    list_submissions,
     list_user_assignments,
     list_user_disputes,
     open_dispute,
@@ -127,6 +129,17 @@ def submission(submission_id: UUID, user: AuthenticatedUser, db: DBSession) -> S
     return submission_response(db, submission_id, user.id)
 
 
+@router.get(
+    "/assignments/{assignment_id}/submissions",
+    response_model=list[SubmissionRead],
+)
+def submissions(
+    assignment_id: UUID, user: AuthenticatedUser, db: DBSession
+) -> list[SubmissionRead]:
+    records = list_submissions(db, assignment_id=assignment_id, user_id=user.id)
+    return [submission_response(db, record.id, user.id) for record in records]
+
+
 @router.post("/submissions/{submission_id}/reviews", response_model=ReviewRead)
 def review(
     submission_id: UUID,
@@ -135,6 +148,11 @@ def review(
     db: DBSession,
 ) -> Review:
     return create_review(db, submission_id=submission_id, reviewer_id=user.id, payload=payload)
+
+
+@router.get("/submissions/{submission_id}/reviews", response_model=list[ReviewRead])
+def reviews(submission_id: UUID, user: AuthenticatedUser, db: DBSession) -> list[Review]:
+    return list_submission_reviews(db, submission_id=submission_id, user_id=user.id)
 
 
 @router.get("/assignments/{assignment_id}/messages", response_model=list[MessageRead])

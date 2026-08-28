@@ -30,6 +30,7 @@ def contract_payload() -> dict:
             "Install the private build, create a note offline, and verify recovery "
             "after reconnecting."
         ),
+        "access_instructions": "Open https://example.com/private-build after acceptance.",
         "device_requirements": "Android 10 or newer with airplane mode available.",
         "evidence_requirements": "Provide one note or screenshot for every required task.",
         "review_window_hours": 72,
@@ -111,6 +112,7 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
         f"/api/v1/assignments/{assignment['id']}/contract", headers=tester_headers
     )
     assert response.status_code == 200
+    assert response.json()["access_instructions"].startswith("Open https://")
 
     submission_payload = {
         "summary": "The note survived the complete offline and reconnection sequence.",
@@ -148,6 +150,22 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
     )
     assert response.status_code == 200, response.text
 
+    response = client.get(
+        f"/api/v1/assignments/{assignment['id']}/submissions", headers=owner_headers
+    )
+    assert response.status_code == 200, response.text
+    assert [item["version"] for item in response.json()] == [1]
+    assert response.json()[0]["items"][0]["note"] == "Created note TX-204 offline."
+    response = client.get(
+        f"/api/v1/submissions/{first_submission['id']}/reviews", headers=tester_headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["decision"] == "changes_requested"
+    response = client.get(
+        f"/api/v1/assignments/{assignment['id']}/submissions", headers=intruder_headers
+    )
+    assert response.status_code == 403
+
     submission_payload["summary"] = (
         "The note survived reconnection and the unique text TX-204 was still present."
     )
@@ -171,6 +189,15 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
         json={"decision": "approved", "notes": "All required recovery evidence is present."},
     )
     assert response.status_code == 200, response.text
+
+    response = client.get(
+        f"/api/v1/assignments/{assignment['id']}/submissions", headers=tester_headers
+    )
+    assert [item["version"] for item in response.json()] == [2, 1]
+    response = client.get(
+        f"/api/v1/submissions/{final_submission['id']}/reviews", headers=tester_headers
+    )
+    assert response.json()[0]["decision"] == "approved"
 
     owner_balance = client.get("/api/v1/credits/balance", headers=owner_headers).json()
     tester_balance = client.get("/api/v1/credits/balance", headers=tester_headers).json()

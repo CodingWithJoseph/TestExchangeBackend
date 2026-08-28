@@ -99,6 +99,7 @@ class ContractTaskRead(APIModel):
 
 class ContractUpsert(APIModel):
     tester_instructions: str = Field(min_length=20, max_length=8000)
+    access_instructions: str | None = Field(default=None, max_length=4000)
     device_requirements: str | None = Field(default=None, max_length=4000)
     evidence_requirements: str = Field(min_length=10, max_length=4000)
     review_window_hours: int = Field(default=72, ge=1, le=720)
@@ -110,6 +111,7 @@ class ContractRead(APIModel):
     campaign_id: UUID
     version: int
     tester_instructions: str
+    access_instructions: str | None
     device_requirements: str | None
     evidence_requirements: str
     review_window_hours: int
