@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import PurePosixPath
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
@@ -183,6 +184,8 @@ def create_submission(
     for item in payload.items:
         if item.storage_key is None and item.external_url is None and item.note is None:
             raise DomainError("Every evidence item must include a file, link, or note", 422)
+        if item.storage_key is not None:
+            _validate_storage_key(assignment_id, item.storage_key)
 
     latest_version = db.scalar(
         select(func.max(EvidenceSubmission.version)).where(
@@ -220,6 +223,25 @@ def create_submission(
     )
     db.flush()
     return submission
+
+
+def _validate_storage_key(assignment_id: UUID, storage_key: str) -> None:
+    """Keep uploaded evidence inside the assignment folder enforced by Storage RLS."""
+    path = PurePosixPath(storage_key)
+    expected_folder = str(assignment_id)
+    if (
+        "\\" in storage_key
+        or storage_key.startswith("/")
+        or "://" in storage_key
+        or ".." in path.parts
+        or len(path.parts) < 2
+        or path.parts[0] != expected_folder
+        or not path.name
+    ):
+        raise DomainError(
+            f"Evidence storage keys must use {expected_folder}/<file-name>",
+            422,
+        )
 
 
 def get_submission(
