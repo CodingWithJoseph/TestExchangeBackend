@@ -77,3 +77,18 @@ def get_current_user(
 
 
 AuthenticatedUser = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def get_moderator(
+    user: AuthenticatedUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> CurrentUser:
+    if user.id not in settings.moderator_user_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Moderator access required",
+        )
+    return user
+
+
+ModeratorUser = Annotated[CurrentUser, Depends(get_moderator)]

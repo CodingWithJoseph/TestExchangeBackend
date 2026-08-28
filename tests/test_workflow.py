@@ -121,10 +121,27 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
             {
                 "task_id": task_ids[1],
                 "kind": "screenshot",
-                "storage_key": "private/evidence/recovered-note.png",
+                "storage_key": f"{assignment['id']}/recovered-note.png",
             },
         ],
     }
+    invalid_payload = {
+        **submission_payload,
+        "items": [
+            submission_payload["items"][0],
+            {
+                **submission_payload["items"][1],
+                "storage_key": "another-assignment/recovered-note.png",
+            },
+        ],
+    }
+    response = client.post(
+        f"/api/v1/assignments/{assignment['id']}/submissions",
+        headers=tester_headers,
+        json=invalid_payload,
+    )
+    assert response.status_code == 422
+
     response = client.post(
         f"/api/v1/assignments/{assignment['id']}/submissions",
         headers=tester_headers,

@@ -280,6 +280,10 @@ class Dispute(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     status: Mapped[DisputeStatus] = mapped_column(
         enum_column(DisputeStatus, "dispute_status"), default=DisputeStatus.OPEN, index=True
     )
+    assigned_to: Mapped[UUID | None] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="RESTRICT"), index=True
+    )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution: Mapped[str | None] = mapped_column(Text)
     resolved_by: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("profiles.id", ondelete="RESTRICT")

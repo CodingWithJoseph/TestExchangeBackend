@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.auth import CurrentUser, get_current_user
+from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -17,6 +18,8 @@ from app.main import app
 OWNER_ID = UUID("10000000-0000-0000-0000-000000000001")
 TESTER_ID = UUID("20000000-0000-0000-0000-000000000002")
 INTRUDER_ID = UUID("30000000-0000-0000-0000-000000000003")
+MODERATOR_ID = UUID("40000000-0000-0000-0000-000000000004")
+SECOND_MODERATOR_ID = UUID("50000000-0000-0000-0000-000000000005")
 
 
 @pytest.fixture
@@ -65,9 +68,17 @@ def client(session_factory: sessionmaker[Session]) -> Generator[TestClient, None
 
     app.dependency_overrides[get_db] = override_db
     app.dependency_overrides[get_current_user] = override_user
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+    # Rate limiting is tested directly with an isolated middleware instance. Keep API
+    # integration tests independent from one another instead of sharing a process window.
+    runtime_settings = get_settings()
+    previous_rate_limit = runtime_settings.rate_limit_enabled
+    runtime_settings.rate_limit_enabled = False
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        runtime_settings.rate_limit_enabled = previous_rate_limit
+        app.dependency_overrides.clear()
 
 
 def auth_headers(user_id: UUID, email: str | None = None) -> dict[str, str]:

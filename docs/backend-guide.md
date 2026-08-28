@@ -74,6 +74,26 @@ Anonymous routes return only `CampaignRead`, which contains the public recruitme
 contracts, evidence storage keys, messages, reviews, disputes, and audit events require a verified
 user who is either the campaign owner or the assigned tester.
 
-Task 3 will add infrastructure-level protections such as Supabase Storage policies, rate limiting,
-moderation roles, and production RLS defense in depth. The service-level ownership checks already
-prevent ordinary API clients from crossing assignment boundaries.
+## Production safeguards
+
+The production-safeguards migration adds defense in depth around the service-level checks:
+
+- Every application table has Row Level Security enabled and direct `anon`/`authenticated`
+  table grants revoked. The FastAPI service uses the database connection as its trusted application
+  boundary; the browser cannot read private workflow tables through PostgREST.
+- The private `test-evidence` Supabase Storage bucket permits only assignment-scoped uploads from
+  an assigned tester while the assignment is active. Reads are limited to that tester and the
+  campaign owner. There are no direct update or delete policies, so submitted evidence is
+  immutable through the browser.
+- The API applies separate configurable read/write fixed-window limits. The in-process limiter
+  protects a single API process; production deployments with multiple workers should add a shared
+  gateway or reverse-proxy limit.
+- Moderator access is an explicit server-side `MODERATOR_USER_IDS` UUID allowlist. Moderators can
+  list disputes, inspect the private assignment case, claim one open dispute, and resolve it. A
+  claim is exclusive and every claim or resolution writes an audit event. Resolving a dispute does
+  not silently alter the credit ledger.
+
+Evidence object keys must be shaped as `<assignment-id>/<file-name>`. This matches the first-folder
+check in the Storage policies and prevents a tester from attaching an object belonging to another
+assignment. The migration is safe to run against the local SQLite test database: it adds the
+moderation columns there and skips PostgreSQL-only RLS and Storage statements.

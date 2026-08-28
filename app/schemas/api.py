@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
@@ -228,11 +229,18 @@ class DisputeRead(APIModel):
     opened_by: UUID
     reason: str
     status: DisputeStatus
+    assigned_to: UUID | None
+    assigned_at: datetime | None
     resolution: str | None
     resolved_by: UUID | None
     resolved_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class DisputeResolve(APIModel):
+    outcome: Literal["resolved", "rejected"]
+    resolution: str = Field(min_length=20, max_length=8000)
 
 
 class AuditEventRead(APIModel):
@@ -243,3 +251,14 @@ class AuditEventRead(APIModel):
     entity_id: UUID
     details: dict
     created_at: datetime
+
+
+class ModerationDisputeCaseRead(APIModel):
+    dispute: DisputeRead
+    assignment: AssignmentRead
+    campaign: CampaignRead
+    contract: ContractRead
+    submissions: list[SubmissionRead]
+    reviews: list[ReviewRead]
+    messages: list[MessageRead]
+    audit_events: list[AuditEventRead]
