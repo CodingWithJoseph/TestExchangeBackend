@@ -1,11 +1,16 @@
+import logging
+from uuid import uuid4
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import campaigns, credits, moderation, profiles, public, workflow
+from app.api.routes import campaigns, credits, moderation, notifications, profiles, public, workflow
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimitMiddleware
 from app.services.common import DomainError
+
+logger = logging.getLogger("testexchange.api")
 
 
 def create_app() -> FastAPI:
@@ -22,7 +27,23 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["Authorization", "Content-Type"],
+        expose_headers=["X-Request-ID"],
     )
+
+    @application.middleware("http")
+    async def request_id(request: Request, call_next):
+        identifier = request.headers.get("X-Request-ID", "").strip()[:100] or str(uuid4())
+        request.state.request_id = identifier
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "Unhandled API error",
+                extra={"request_id": identifier, "path": request.url.path},
+            )
+            raise
+        response.headers["X-Request-ID"] = identifier
+        return response
 
     @application.exception_handler(DomainError)
     async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
@@ -34,6 +55,7 @@ def create_app() -> FastAPI:
     application.include_router(workflow.router, prefix=settings.api_prefix)
     application.include_router(credits.router, prefix=settings.api_prefix)
     application.include_router(moderation.router, prefix=settings.api_prefix)
+    application.include_router(notifications.router, prefix=settings.api_prefix)
     return application
 
 

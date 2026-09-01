@@ -7,7 +7,9 @@ from app.core.auth import AuthenticatedUser
 from app.models import Campaign
 from app.schemas.api import (
     CampaignCreate,
+    CampaignLaunch,
     CampaignRead,
+    CampaignTransition,
     CampaignUpdate,
     ContractRead,
     ContractTaskRead,
@@ -16,8 +18,10 @@ from app.schemas.api import (
 from app.services.campaigns import (
     create_campaign,
     get_contract,
+    launch_campaign,
     list_owned_campaigns,
     publish_campaign,
+    transition_campaign,
     update_campaign,
     upsert_contract,
 )
@@ -37,6 +41,8 @@ def contract_response(db: DBSession, campaign_id: UUID) -> ContractRead:
         device_requirements=contract.device_requirements,
         evidence_requirements=contract.evidence_requirements,
         review_window_hours=contract.review_window_hours,
+        minimum_duration_days=contract.minimum_duration_days,
+        required_sessions=contract.required_sessions,
         status=contract.status,
         locked_at=contract.locked_at,
         tasks=[ContractTaskRead.model_validate(task) for task in tasks],
@@ -46,6 +52,11 @@ def contract_response(db: DBSession, campaign_id: UUID) -> ContractRead:
 @router.post("", response_model=CampaignRead, status_code=status.HTTP_201_CREATED)
 def create(payload: CampaignCreate, user: AuthenticatedUser, db: DBSession) -> Campaign:
     return create_campaign(db, owner_id=user.id, payload=payload)
+
+
+@router.post("/launch", response_model=CampaignRead, status_code=status.HTTP_201_CREATED)
+def launch(payload: CampaignLaunch, user: AuthenticatedUser, db: DBSession) -> Campaign:
+    return launch_campaign(db, owner_id=user.id, payload=payload)
 
 
 @router.get("/mine", response_model=list[CampaignRead])
@@ -84,3 +95,18 @@ def read_contract(campaign_id: UUID, user: AuthenticatedUser, db: DBSession) -> 
 @router.post("/{campaign_id}/publish", response_model=CampaignRead)
 def publish(campaign_id: UUID, user: AuthenticatedUser, db: DBSession) -> Campaign:
     return publish_campaign(db, campaign_id=campaign_id, owner_id=user.id)
+
+
+@router.post("/{campaign_id}/transition", response_model=CampaignRead)
+def transition(
+    campaign_id: UUID,
+    payload: CampaignTransition,
+    user: AuthenticatedUser,
+    db: DBSession,
+) -> Campaign:
+    return transition_campaign(
+        db,
+        campaign_id=campaign_id,
+        owner_id=user.id,
+        payload=payload,
+    )

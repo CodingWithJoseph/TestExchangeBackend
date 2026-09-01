@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha256
 from math import ceil
 from threading import Lock
 from time import monotonic
@@ -70,11 +69,9 @@ class FixedWindowRateLimiter:
             )
 
 
-def _request_identity(request: Request, api_prefix: str) -> str:
-    authorization = request.headers.get("Authorization", "")
-    if request.url.path.startswith(api_prefix) and authorization.lower().startswith("bearer "):
-        token_fingerprint = sha256(authorization[7:].encode()).hexdigest()[:24]
-        return f"token:{token_fingerprint}"
+def _request_identity(request: Request) -> str:
+    # A raw bearer token is not trusted until authentication runs. Rate-limit by network
+    # identity here so rotating invalid tokens cannot create unlimited buckets.
     client_host = request.client.host if request.client else "unknown"
     return f"ip:{client_host}"
 
@@ -89,7 +86,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if (
             not self.settings.rate_limit_enabled
             or request.method in {"OPTIONS", "HEAD"}
-            or request.url.path in {"/health", "/docs", "/openapi.json", "/redoc"}
+            or request.url.path in {"/health", "/ready", "/docs", "/openapi.json", "/redoc"}
         ):
             return await call_next(request)
 
@@ -100,7 +97,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             else self.settings.rate_limit_read_requests
         )
         scope = "write" if is_write else "read"
-        identity = _request_identity(request, self.settings.api_prefix)
+        identity = _request_identity(request)
         result = self.limiter.consume(f"{identity}:{scope}", limit)
         headers = {
             "X-RateLimit-Limit": str(result.limit),

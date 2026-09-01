@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 
 from app.api.deps import DBSession
 from app.core.auth import ModeratorUser
-from app.models import Dispute
+from app.models import Dispute, Profile, WaitlistEntry
 from app.models.enums import DisputeStatus
 from app.schemas.api import (
     AssignmentRead,
@@ -18,8 +18,11 @@ from app.schemas.api import (
     EvidenceItemRead,
     MessageRead,
     ModerationDisputeCaseRead,
+    ModerationParticipantRead,
+    ParticipantSuspension,
     ReviewRead,
     SubmissionRead,
+    WaitlistRead,
 )
 from app.services.moderation import (
     ModerationCase,
@@ -27,6 +30,12 @@ from app.services.moderation import (
     get_moderation_case,
     list_disputes,
     resolve_dispute,
+)
+from app.services.profiles import (
+    list_participants,
+    list_waitlist,
+    restore_participant,
+    suspend_participant,
 )
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
@@ -42,6 +51,8 @@ def case_response(case: ModerationCase) -> ModerationDisputeCaseRead:
         device_requirements=case.contract.device_requirements,
         evidence_requirements=case.contract.evidence_requirements,
         review_window_hours=case.contract.review_window_hours,
+        minimum_duration_days=case.contract.minimum_duration_days,
+        required_sessions=case.contract.required_sessions,
         status=case.contract.status,
         locked_at=case.contract.locked_at,
         created_at=case.contract.created_at,
@@ -107,3 +118,39 @@ def resolve(
         moderator_id=user.id,
         payload=payload,
     )
+
+
+@router.get("/participants", response_model=list[ModerationParticipantRead])
+def participants(_: ModeratorUser, db: DBSession) -> list[Profile]:
+    return list_participants(db)
+
+
+@router.post(
+    "/participants/{participant_id}/suspend",
+    response_model=ModerationParticipantRead,
+)
+def suspend(
+    participant_id: UUID,
+    payload: ParticipantSuspension,
+    user: ModeratorUser,
+    db: DBSession,
+) -> Profile:
+    return suspend_participant(
+        db,
+        participant_id=participant_id,
+        moderator_id=user.id,
+        reason=payload.reason,
+    )
+
+
+@router.post(
+    "/participants/{participant_id}/restore",
+    response_model=ModerationParticipantRead,
+)
+def restore(participant_id: UUID, user: ModeratorUser, db: DBSession) -> Profile:
+    return restore_participant(db, participant_id=participant_id, moderator_id=user.id)
+
+
+@router.get("/waitlist", response_model=list[WaitlistRead])
+def waitlist(_: ModeratorUser, db: DBSession) -> list[WaitlistEntry]:
+    return list_waitlist(db)

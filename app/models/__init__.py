@@ -1,6 +1,7 @@
 from app.models.entities import (
     Assignment,
     AuditEvent,
+    BetaProgramState,
     Campaign,
     ContractTask,
     CreditAccount,
@@ -9,14 +10,18 @@ from app.models.entities import (
     EvidenceItem,
     EvidenceSubmission,
     Message,
+    Notification,
     Profile,
     Review,
     TestingContract,
+    TestingSession,
+    WaitlistEntry,
 )
 
 __all__ = [
     "Assignment",
     "AuditEvent",
+    "BetaProgramState",
     "Campaign",
     "ContractTask",
     "CreditAccount",
@@ -25,7 +30,10 @@ __all__ = [
     "EvidenceItem",
     "EvidenceSubmission",
     "Message",
+    "Notification",
     "Profile",
     "Review",
     "TestingContract",
+    "TestingSession",
+    "WaitlistEntry",
 ]

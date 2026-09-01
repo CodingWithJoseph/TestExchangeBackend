@@ -1,12 +1,25 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.models import Campaign, ContractTask, TestingContract
-from app.models.enums import CampaignStatus, ContractStatus, CreditEntryType
-from app.schemas.api import CampaignCreate, CampaignUpdate, ContractUpsert
+from app.models import Assignment, Campaign, ContractTask, TestingContract
+from app.models.enums import (
+    ACTIVE_TESTING_ASSIGNMENT_STATUSES,
+    OCCUPIED_ASSIGNMENT_STATUSES,
+    AssignmentStatus,
+    CampaignStatus,
+    ContractStatus,
+    CreditEntryType,
+)
+from app.schemas.api import (
+    CampaignCreate,
+    CampaignLaunch,
+    CampaignTransition,
+    CampaignUpdate,
+    ContractUpsert,
+)
 from app.services.common import (
     DomainError,
     add_audit_event,
@@ -15,6 +28,7 @@ from app.services.common import (
     require_campaign_owner,
 )
 from app.services.credits import record_credit_entry
+from app.services.notifications import add_notification
 
 
 def create_campaign(db: Session, *, owner_id: UUID, payload: CampaignCreate) -> Campaign:
@@ -55,10 +69,22 @@ def update_campaign(
 
 
 def list_public_campaigns(db: Session) -> list[Campaign]:
+    occupied_slots = (
+        select(func.count(Assignment.id))
+        .where(
+            Assignment.campaign_id == Campaign.id,
+            Assignment.status.in_(OCCUPIED_ASSIGNMENT_STATUSES),
+        )
+        .correlate(Campaign)
+        .scalar_subquery()
+    )
     return list(
         db.scalars(
             select(Campaign)
-            .where(Campaign.status == CampaignStatus.PUBLISHED)
+            .where(
+                Campaign.status == CampaignStatus.PUBLISHED,
+                occupied_slots < Campaign.target_testers,
+            )
             .order_by(Campaign.published_at.desc())
         )
     )
@@ -147,11 +173,14 @@ def publish_campaign(db: Session, *, campaign_id: UUID, owner_id: UUID) -> Campa
         db,
         user_id=owner_id,
         delta=-required_credits,
-        entry_type=CreditEntryType.RESERVATION,
-        idempotency_key=f"campaign:{campaign.id}:reservation",
+        entry_type=CreditEntryType.POSTING,
+        idempotency_key=f"campaign:{campaign.id}:posting",
         reference_type="campaign",
         reference_id=campaign.id,
-        note=f"Reserved for {campaign.target_testers} tester rewards",
+        note=(
+            f"Published {campaign.name}: permanent spend for "
+            f"{campaign.target_testers} tester rewards"
+        ),
         created_by=owner_id,
     )
     now = datetime.now(UTC)
@@ -165,7 +194,156 @@ def publish_campaign(db: Session, *, campaign_id: UUID, owner_id: UUID) -> Campa
         action="campaign.published",
         entity_type="campaign",
         entity_id=campaign.id,
-        details={"reserved_credits": required_credits},
+        details={"spent_credits": required_credits, "refundable": False},
     )
+    db.flush()
+    return campaign
+
+
+def launch_campaign(db: Session, *, owner_id: UUID, payload: CampaignLaunch) -> Campaign:
+    """Create, lock, fund, and publish a campaign in one database transaction."""
+    campaign = create_campaign(db, owner_id=owner_id, payload=payload.campaign)
+    upsert_contract(
+        db,
+        campaign_id=campaign.id,
+        owner_id=owner_id,
+        payload=payload.contract,
+    )
+    return publish_campaign(db, campaign_id=campaign.id, owner_id=owner_id)
+
+
+def maybe_complete_campaign(db: Session, *, campaign: Campaign, actor_id: UUID) -> bool:
+    approved_count = (
+        db.scalar(
+            select(func.count(Assignment.id)).where(
+                Assignment.campaign_id == campaign.id,
+                Assignment.status == AssignmentStatus.APPROVED,
+            )
+        )
+        or 0
+    )
+    target_reached = (
+        campaign.status in {CampaignStatus.PUBLISHED, CampaignStatus.PAUSED}
+        and approved_count >= campaign.target_testers
+    )
+    closed_work_settled = False
+    if campaign.status == CampaignStatus.CANCELLED:
+        active_count = (
+            db.scalar(
+                select(func.count(Assignment.id)).where(
+                    Assignment.campaign_id == campaign.id,
+                    Assignment.status.in_(ACTIVE_TESTING_ASSIGNMENT_STATUSES),
+                )
+            )
+            or 0
+        )
+        accepted_count = (
+            db.scalar(
+                select(func.count(Assignment.id)).where(
+                    Assignment.campaign_id == campaign.id,
+                    Assignment.accepted_at.is_not(None),
+                )
+            )
+            or 0
+        )
+        closed_work_settled = active_count == 0 and accepted_count > 0
+    if not target_reached and not closed_work_settled:
+        return False
+
+    campaign.status = CampaignStatus.COMPLETED
+    add_audit_event(
+        db,
+        actor_id=actor_id,
+        action="campaign.completed",
+        entity_type="campaign",
+        entity_id=campaign.id,
+        details={
+            "approved_testers": approved_count,
+            "target_reached": target_reached,
+            "recruitment_closed": closed_work_settled,
+        },
+    )
+    return True
+
+
+def transition_campaign(
+    db: Session,
+    *,
+    campaign_id: UUID,
+    owner_id: UUID,
+    payload: CampaignTransition,
+) -> Campaign:
+    campaign = db.scalar(select(Campaign).where(Campaign.id == campaign_id).with_for_update())
+    if campaign is None:
+        raise DomainError("Campaign not found", 404)
+    require_campaign_owner(campaign, owner_id)
+
+    previous_status = campaign.status
+    if payload.action == "pause":
+        if campaign.status != CampaignStatus.PUBLISHED:
+            raise DomainError("Only published campaigns can be paused", 409)
+        campaign.status = CampaignStatus.PAUSED
+    elif payload.action == "resume":
+        if campaign.status != CampaignStatus.PAUSED:
+            raise DomainError("Only paused campaigns can be resumed", 409)
+        occupied_slots = db.scalar(
+            select(func.count(Assignment.id)).where(
+                Assignment.campaign_id == campaign.id,
+                Assignment.status.in_(OCCUPIED_ASSIGNMENT_STATUSES),
+            )
+        )
+        if occupied_slots is not None and occupied_slots >= campaign.target_testers:
+            raise DomainError("This campaign already has its target number of testers", 409)
+        campaign.status = CampaignStatus.PUBLISHED
+    else:
+        if campaign.status not in {CampaignStatus.PUBLISHED, CampaignStatus.PAUSED}:
+            raise DomainError("Only an open or paused campaign can be closed", 409)
+        campaign.status = CampaignStatus.CANCELLED
+        pending_assignments = list(
+            db.scalars(
+                select(Assignment)
+                .where(
+                    Assignment.campaign_id == campaign.id,
+                    Assignment.status == AssignmentStatus.APPLIED,
+                )
+                .with_for_update()
+            )
+        )
+        now = datetime.now(UTC)
+        for assignment in pending_assignments:
+            assignment.status = AssignmentStatus.CANCELLED
+            assignment.completed_at = now
+            add_audit_event(
+                db,
+                actor_id=owner_id,
+                action="assignment.declined",
+                entity_type="assignment",
+                entity_id=assignment.id,
+                details={"reason": "recruitment_closed"},
+            )
+            add_notification(
+                db,
+                user_id=assignment.tester_id,
+                kind="application_closed",
+                title=f"Recruitment closed for {campaign.name}",
+                body="The campaign closed recruitment before this application was accepted.",
+                entity_type="assignment",
+                entity_id=assignment.id,
+                idempotency_key=f"assignment:{assignment.id}:recruitment-closed-notification",
+            )
+    add_audit_event(
+        db,
+        actor_id=owner_id,
+        action=f"campaign.{payload.action}d" if payload.action != "close" else "campaign.closed",
+        entity_type="campaign",
+        entity_id=campaign.id,
+        details={
+            "previous_status": previous_status.value,
+            "new_status": campaign.status.value,
+            "refund_credits": 0,
+        },
+    )
+    if payload.action == "close":
+        maybe_complete_campaign(db, campaign=campaign, actor_id=owner_id)
     db.flush()
     return campaign

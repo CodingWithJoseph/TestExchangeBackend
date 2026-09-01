@@ -54,6 +54,35 @@ revoke all on function private.testexchange_can_upload_evidence(text) from publi
 grant execute on function private.testexchange_can_read_evidence(text) to authenticated;
 grant execute on function private.testexchange_can_upload_evidence(text) to authenticated;
 
+create or replace function private.testexchange_can_delete_orphan_evidence(
+    folder text,
+    object_name text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+    return exists (
+        select 1
+        from public.assignments as assignment
+        where assignment.id = folder::uuid
+          and assignment.tester_id = auth.uid()
+          and assignment.status in ('in_progress', 'changes_requested')
+    ) and not exists (
+        select 1
+        from public.evidence_items as evidence
+        where evidence.storage_key = object_name
+    );
+exception when invalid_text_representation then
+    return false;
+end;
+$$;
+
+revoke all on function private.testexchange_can_delete_orphan_evidence(text, text) from public;
+grant execute on function private.testexchange_can_delete_orphan_evidence(text, text) to authenticated;
+
 insert into storage.buckets (
     id, name, public, file_size_limit, allowed_mime_types
 ) values (
@@ -62,8 +91,7 @@ insert into storage.buckets (
     false,
     52428800,
     array[
-        'image/png', 'image/jpeg', 'image/webp', 'video/mp4',
-        'text/plain', 'application/pdf', 'application/zip'
+        'image/png', 'image/jpeg', 'image/webp', 'video/mp4', 'text/plain'
     ]
 )
 on conflict (id) do update set
@@ -73,6 +101,7 @@ on conflict (id) do update set
 
 drop policy if exists testexchange_evidence_read on storage.objects;
 drop policy if exists testexchange_evidence_upload on storage.objects;
+drop policy if exists testexchange_evidence_orphan_cleanup on storage.objects;
 
 create policy testexchange_evidence_read
 on storage.objects for select to authenticated
@@ -88,4 +117,15 @@ with check (
     and private.testexchange_can_upload_evidence((storage.foldername(name))[1])
 );
 
--- There are intentionally no UPDATE or DELETE policies. Evidence is immutable from the client.
+create policy testexchange_evidence_orphan_cleanup
+on storage.objects for delete to authenticated
+using (
+    bucket_id = 'test-evidence'
+    and private.testexchange_can_delete_orphan_evidence(
+        (storage.foldername(name))[1],
+        name
+    )
+);
+
+-- There is no UPDATE policy. DELETE is limited to uploads that have no evidence_items row,
+-- so submitted evidence remains immutable while failed-upload cleanup stays possible.

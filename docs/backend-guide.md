@@ -55,12 +55,24 @@ applied
 
 The database and service layer enforce these transitions. A client cannot skip directly from
 `applied` to `submitted`, review somebody else's submission, or award the same assignment twice.
+Pausing a campaign pauses recruitment only. Closing recruitment declines pending applications but
+does not cancel accepted or in-progress work. Active testers keep their private workspace, and a
+closed campaign completes after its previously accepted assignments are settled. Owners can
+decline pending applications individually, and testers can withdraw before submission.
+
+## Public-beta admission
+
+Profile creation claims one of the configured public-beta seats. The singleton beta-state row is
+locked together with profile and signup-credit creation, making the admission decision atomic on
+PostgreSQL. Anonymous clients can read remaining capacity and join an idempotent, normalized-email
+waitlist when the cohort is full or registration is paused. Moderators can suspend or restore an
+existing profile without deleting its campaign, ledger, evidence, or audit history.
 
 ## Credit lifecycle
 
 1. Creating a profile can add a configurable signup grant.
-2. Publishing a campaign locks its contract and reserves
-   `target_testers × reward_credits` from the owner's account.
+2. Publishing a campaign locks its contract and permanently spends
+   `target_testers × reward_credits` from the owner's account. Pause or close never refunds it.
 3. Approval creates one idempotent reward entry for the tester.
 4. A unique idempotency key prevents retries from paying twice.
 5. ORM hooks and database triggers reject updates and deletes on ledger rows.
@@ -109,8 +121,9 @@ The production-safeguards migration adds defense in depth around the service-lev
   gateway or reverse-proxy limit.
 - Moderator access is an explicit server-side `MODERATOR_USER_IDS` UUID allowlist. Moderators can
   list disputes, inspect the private assignment case, claim one open dispute, and resolve it. A
-  claim is exclusive and every claim or resolution writes an audit event. Resolving a dispute does
-  not silently alter the credit ledger.
+  claim is exclusive and every claim or resolution writes an audit event. A moderator-awarded
+  dispute approves the assignment and appends the tester reward with the same idempotency boundary
+  as owner approval; upholding the rejection moves no credits.
 
 Evidence object keys must be shaped as `<assignment-id>/<file-name>`. This matches the first-folder
 check in the Storage policies and prevents a tester from attaching an object belonging to another
