@@ -129,3 +129,6 @@ alembic downgrade base
 
 See [docs/backend-guide.md](docs/backend-guide.md) for the request lifecycle, database-table
 rationale, credit design, and workflow state machine.
+
+See [docs/operations.md](docs/operations.md) for Sentry, scheduled uptime checks, encrypted object
+storage backups, and the tested restoration procedure.

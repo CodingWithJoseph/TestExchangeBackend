@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import campaigns, credits, moderation, notifications, profiles, public, workflow
 from app.core.config import get_settings
+from app.core.monitoring import configure_error_tracking
 from app.core.rate_limit import RateLimitMiddleware
 from app.services.common import DomainError
 
@@ -15,6 +16,7 @@ logger = logging.getLogger("testexchange.api")
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_error_tracking(settings)
     application = FastAPI(
         title=settings.app_name,
         version="0.1.0",
