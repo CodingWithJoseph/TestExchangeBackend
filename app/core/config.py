@@ -1,7 +1,7 @@
 from functools import lru_cache
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     supabase_url: str | None = None
     supabase_jwt_audience: str = "authenticated"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
-    signup_credit_grant: int = 24
+    signup_credit_grant: int = Field(default=24, ge=0, le=10000)
+    public_beta_enabled: bool = True
+    public_beta_max_users: int = Field(default=200, ge=1, le=100000)
     rate_limit_enabled: bool = True
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     rate_limit_read_requests: int = Field(default=120, ge=1, le=10000)
@@ -35,6 +37,23 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.startswith("["):
             return [user_id.strip() for user_id in value.split(",") if user_id.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_production_safety(self) -> "Settings":
+        if self.app_env.lower() not in {"production", "staging"}:
+            return self
+        problems: list[str] = []
+        if not self.database_url.startswith(("postgres://", "postgresql://")):
+            problems.append("DATABASE_URL must use PostgreSQL")
+        if not self.supabase_url:
+            problems.append("SUPABASE_URL is required")
+        if any("localhost" in origin or "127.0.0.1" in origin for origin in self.cors_origins):
+            problems.append("CORS_ORIGINS cannot contain localhost")
+        if not self.moderator_user_ids:
+            problems.append("MODERATOR_USER_IDS must contain at least one moderator")
+        if problems:
+            raise ValueError("Unsafe production configuration: " + "; ".join(problems))
+        return self
 
     @property
     def supabase_issuer(self) -> str:

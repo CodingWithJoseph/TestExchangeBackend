@@ -149,6 +149,7 @@ def test_moderator_can_claim_review_and_resolve_private_dispute(client: TestClie
         headers=auth_headers(SECOND_MODERATOR_ID),
         json={
             "outcome": "resolved",
+            "remedy": "award_tester",
             "resolution": "The evidence meets the written contract requirements.",
         },
     )
@@ -159,12 +160,23 @@ def test_moderator_can_claim_review_and_resolve_private_dispute(client: TestClie
         headers=auth_headers(MODERATOR_ID),
         json={
             "outcome": "resolved",
+            "remedy": "award_tester",
             "resolution": "The evidence meets the written contract requirements.",
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "resolved"
     assert response.json()["resolved_by"] == str(MODERATOR_ID)
+    assert response.json()["remedy"] == "award_tester"
+
+    assignment_after = client.get(
+        f"/api/v1/assignments/{assignment['id']}", headers=auth_headers(TESTER_ID)
+    ).json()
+    assert assignment_after["status"] == "approved"
+    assert (
+        client.get("/api/v1/credits/balance", headers=auth_headers(TESTER_ID)).json()["balance"]
+        == 28
+    )
 
     participant_disputes = client.get(
         "/api/v1/disputes/mine", headers=auth_headers(TESTER_ID)

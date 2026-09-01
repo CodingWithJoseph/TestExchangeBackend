@@ -30,11 +30,14 @@ sends the resulting access token as `Authorization: Bearer <token>`.
 - Developer approval, rejection, and correction requests
 - Participant-only submission and review history endpoints for restoring workspaces after refresh
 - Credit accounts with row locking and an append-only ledger
+- Atomic campaign launch, recruitment pause/resume/close, capacity locking, and automatic completion
+- Owner application decline and tester withdrawal without interrupting accepted testers
 - Disputes and participant-visible audit history
-- Moderator-only dispute queue, assignment claiming, private case review, and resolution audit trail
+- Moderator-only dispute queue, participant suspension/restoration, waitlist review, and resolution audit trail
 - Assignment-scoped evidence storage keys with private Supabase Storage policy support
 - Per-process read/write API rate limits with configurable windows and response headers
-- Automatic private-beta starting credits, configurable with `SIGNUP_CREDIT_GRANT`
+- A concurrency-safe public-beta cap and anonymous waitlist, configurable with `PUBLIC_BETA_MAX_USERS`
+- Automatic public-beta starting credits, configurable with `SIGNUP_CREDIT_GRANT`
 - Private, deterministic submission quality pre-checks that explain evidence gaps to reviewers
 
 The quality pre-check is advisory and intentionally deterministic in this phase. The
@@ -56,9 +59,14 @@ policies.
 
 Set `MODERATOR_USER_IDS` to a comma-separated list of Supabase Auth user UUIDs before running the
 moderator API. This is a server-side allowlist; client-controlled profile or JWT metadata does not
-grant moderator access. Dispute resolution records a decision and does not move credits. A later
-credit adjustment workflow should be designed explicitly if moderation needs to override a
-developer's original decision.
+grant moderator access. A moderator can uphold a rejection or approve the disputed submission and
+issue its tester reward exactly once through an idempotent ledger entry.
+
+Public registration is enabled with `PUBLIC_BETA_ENABLED=true` and capped by
+`PUBLIC_BETA_MAX_USERS` (200 by default). A seat is claimed only when the authenticated user creates
+their TestExchange profile. The singleton beta-state row is locked in that transaction, so
+simultaneous signups cannot exceed the cap. When full or paused, the anonymous waitlist endpoint
+accepts a normalized email address. Supabase email confirmation should remain enabled.
 
 ## Run locally
 
@@ -98,6 +106,8 @@ DATABASE_URL=postgresql://testexchange:testexchange@localhost:54322/testexchange
    and `127.0.0.1` are different browser origins during local development.
 5. Run `alembic upgrade head` against the Supabase database.
 6. Configure the frontend Supabase client and send its session access token to this API.
+7. Keep public email signup enabled for the public beta, require email confirmation, and set the
+   frontend Auth redirect URLs for every approved origin.
 
 After applying the production-safeguards migration, create no additional public Storage policies
 for `test-evidence` unless they preserve the assignment-folder checks. The built-in rate limiter

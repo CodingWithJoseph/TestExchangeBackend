@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Annotated
 from uuid import UUID
 
@@ -6,8 +7,11 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
+from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.db.session import get_db
+from app.models import Profile
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,10 +61,10 @@ class SupabaseTokenVerifier:
             ) from exc
 
 
-def get_token_verifier(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> SupabaseTokenVerifier:
-    return SupabaseTokenVerifier(settings)
+@lru_cache
+def get_token_verifier() -> SupabaseTokenVerifier:
+    # Keep one PyJWKClient per process so its signing-key cache survives across requests.
+    return SupabaseTokenVerifier(get_settings())
 
 
 def get_current_user(
@@ -76,7 +80,20 @@ def get_current_user(
     return verifier.verify(credentials.credentials)
 
 
-AuthenticatedUser = Annotated[CurrentUser, Depends(get_current_user)]
+def get_active_user(
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> CurrentUser:
+    profile = db.get(Profile, user.id)
+    if profile is not None and profile.is_suspended:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This account is suspended. Contact support if you believe this is an error.",
+        )
+    return user
+
+
+AuthenticatedUser = Annotated[CurrentUser, Depends(get_active_user)]
 
 
 def get_moderator(

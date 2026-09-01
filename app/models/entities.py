@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
@@ -17,7 +18,7 @@ from sqlalchemy import (
     event,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import (
@@ -25,6 +26,7 @@ from app.models.enums import (
     CampaignStatus,
     ContractStatus,
     CreditEntryType,
+    DisputeRemedy,
     DisputeStatus,
     EvidenceKind,
     Platform,
@@ -52,6 +54,32 @@ class Profile(Base, TimestampMixin):
     display_name: Mapped[str] = mapped_column(String(100))
     bio: Mapped[str | None] = mapped_column(String(500))
     avatar_url: Mapped[str | None] = mapped_column(String(500))
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suspension_reason: Mapped[str | None] = mapped_column(String(500))
+
+
+class BetaProgramState(Base):
+    __tablename__ = "beta_program_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_beta_program_singleton"),
+        CheckConstraint("claimed_seats >= 0", name="ck_beta_claimed_seats_nonnegative"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    claimed_seats: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class WaitlistEntry(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "waitlist_entries"
+
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class Campaign(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -78,6 +106,7 @@ class Campaign(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         enum_column(CampaignStatus, "campaign_status"), default=CampaignStatus.DRAFT, index=True
     )
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    owner_profile: Mapped[Profile] = relationship(foreign_keys=[owner_id], lazy="selectin")
 
 
 class TestingContract(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -92,6 +121,8 @@ class TestingContract(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     device_requirements: Mapped[str | None] = mapped_column(Text)
     evidence_requirements: Mapped[str] = mapped_column(Text)
     review_window_hours: Mapped[int] = mapped_column(Integer, default=72)
+    minimum_duration_days: Mapped[int] = mapped_column(Integer, default=0)
+    required_sessions: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[ContractStatus] = mapped_column(
         enum_column(ContractStatus, "contract_status"), default=ContractStatus.DRAFT
     )
@@ -137,6 +168,24 @@ class Assignment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tester_profile: Mapped[Profile] = relationship(foreign_keys=[tester_id], lazy="selectin")
+
+
+class TestingSession(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "testing_sessions"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "session_date", name="uq_testing_session_day"),
+        Index("ix_testing_sessions_assignment_created", "assignment_id", "created_at"),
+    )
+
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assignments.id", ondelete="CASCADE"), index=True
+    )
+    session_date: Mapped[date] = mapped_column(Date)
+    note: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class EvidenceSubmission(Base, UUIDPrimaryKeyMixin):
@@ -199,6 +248,28 @@ class Message(Base, UUIDPrimaryKeyMixin):
         Uuid, ForeignKey("profiles.id", ondelete="RESTRICT"), index=True
     )
     body: Mapped[str] = mapped_column(String(4000))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Notification(Base, UUIDPrimaryKeyMixin):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+        Index("ix_notifications_user_read", "user_id", "read_at"),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("profiles.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(160))
+    body: Mapped[str] = mapped_column(String(500))
+    entity_type: Mapped[str] = mapped_column(String(80))
+    entity_id: Mapped[UUID] = mapped_column(Uuid)
+    idempotency_key: Mapped[str] = mapped_column(String(200), unique=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -285,6 +356,9 @@ class Dispute(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution: Mapped[str | None] = mapped_column(Text)
+    remedy: Mapped[DisputeRemedy | None] = mapped_column(
+        enum_column(DisputeRemedy, "dispute_remedy")
+    )
     resolved_by: Mapped[UUID | None] = mapped_column(
         Uuid, ForeignKey("profiles.id", ondelete="RESTRICT")
     )

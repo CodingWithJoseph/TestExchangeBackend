@@ -17,9 +17,18 @@ from app.models import (
     Review,
     TestingContract,
 )
-from app.models.enums import DisputeStatus
+from app.models.enums import (
+    AssignmentStatus,
+    CreditEntryType,
+    DisputeRemedy,
+    DisputeStatus,
+    SubmissionStatus,
+)
 from app.schemas.api import DisputeResolve
+from app.services.campaigns import maybe_complete_campaign
 from app.services.common import DomainError, add_audit_event, get_campaign
+from app.services.credits import record_credit_entry
+from app.services.notifications import add_notification
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +166,51 @@ def resolve_dispute(
     if dispute.assigned_to != moderator_id:
         raise DomainError("Only the assigned moderator can resolve this dispute", 403)
 
+    assignment = db.scalar(
+        select(Assignment).where(Assignment.id == dispute.assignment_id).with_for_update()
+    )
+    if assignment is None:
+        raise DomainError("Assignment not found", 404)
+
+    if payload.remedy == DisputeRemedy.AWARD_TESTER:
+        if dispute.submission_id is None:
+            raise DomainError("This dispute has no submission to approve", 409)
+        if assignment.status != AssignmentStatus.REJECTED:
+            raise DomainError("Only a rejected assignment can receive a dispute award", 409)
+        submission = db.scalar(
+            select(EvidenceSubmission)
+            .where(EvidenceSubmission.id == dispute.submission_id)
+            .with_for_update()
+        )
+        if submission is None or submission.assignment_id != assignment.id:
+            raise DomainError("The disputed submission was not found", 409)
+        campaign = db.scalar(
+            select(Campaign).where(Campaign.id == assignment.campaign_id).with_for_update()
+        )
+        if campaign is None:
+            raise DomainError("Campaign not found", 404)
+
+        now = datetime.now(UTC)
+        submission.status = SubmissionStatus.APPROVED
+        assignment.status = AssignmentStatus.APPROVED
+        assignment.completed_at = now
+        record_credit_entry(
+            db,
+            user_id=assignment.tester_id,
+            delta=campaign.reward_credits,
+            entry_type=CreditEntryType.REWARD,
+            idempotency_key=f"assignment:{assignment.id}:reward",
+            reference_type="assignment",
+            reference_id=assignment.id,
+            note=f"Moderator-approved test for {campaign.name}",
+            created_by=moderator_id,
+        )
+        db.flush()
+        maybe_complete_campaign(db, campaign=campaign, actor_id=moderator_id)
+
     dispute.status = DisputeStatus(payload.outcome)
     dispute.resolution = payload.resolution
+    dispute.remedy = payload.remedy
     dispute.resolved_by = moderator_id
     dispute.resolved_at = datetime.now(UTC)
     add_audit_event(
@@ -167,7 +219,27 @@ def resolve_dispute(
         action=f"dispute.{payload.outcome}",
         entity_type="assignment",
         entity_id=dispute.assignment_id,
-        details={"dispute_id": str(dispute.id), "outcome": payload.outcome},
+        details={
+            "dispute_id": str(dispute.id),
+            "outcome": payload.outcome,
+            "remedy": payload.remedy.value,
+        },
     )
+    campaign_for_notification = get_campaign(db, assignment.campaign_id)
+    resolution_body = payload.resolution[:500]
+    for recipient_id, audience in (
+        (assignment.tester_id, "tester"),
+        (campaign_for_notification.owner_id, "owner"),
+    ):
+        add_notification(
+            db,
+            user_id=recipient_id,
+            kind="dispute_resolved",
+            title=f"Dispute resolved for {campaign_for_notification.name}",
+            body=resolution_body,
+            entity_type="dispute",
+            entity_id=dispute.id,
+            idempotency_key=f"dispute:{dispute.id}:{audience}-resolution-notification",
+        )
     db.flush()
     return dispute

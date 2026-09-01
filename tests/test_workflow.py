@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi.testclient import TestClient
 
 from app.models.enums import AssignmentStatus
@@ -255,8 +257,8 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
             "reason": "Opening a test dispute to verify the private audit workflow.",
         },
     )
-    assert response.status_code == 201, response.text
-    assert response.json()["status"] == "open"
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Only a rejected assignment can be disputed"
 
 
 def test_profile_username_and_campaign_ownership_are_enforced(client: TestClient) -> None:
@@ -278,3 +280,163 @@ def test_profile_username_and_campaign_ownership_are_enforced(client: TestClient
         json={"name": "Unauthorized rename"},
     )
     assert response.status_code == 403
+
+
+def test_recruitment_controls_do_not_interrupt_active_testers(client: TestClient) -> None:
+    third_tester_id = UUID("60000000-0000-0000-0000-000000000006")
+    for user_id, username in (
+        (OWNER_ID, "recruitment-owner"),
+        (TESTER_ID, "active-tester"),
+        (INTRUDER_ID, "declined-tester"),
+        (third_tester_id, "pending-tester"),
+    ):
+        create_profile(client, user_id, username)
+
+    campaign = client.post(
+        "/api/v1/campaigns/launch",
+        headers=auth_headers(OWNER_ID),
+        json={"campaign": campaign_payload(), "contract": contract_payload()},
+    ).json()
+
+    declined = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/assignments",
+        headers=auth_headers(INTRUDER_ID),
+        json={"application_note": "Please review my application."},
+    ).json()
+    response = client.post(
+        f"/api/v1/assignments/{declined['id']}/decline",
+        headers=auth_headers(OWNER_ID),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "cancelled"
+
+    active = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/assignments",
+        headers=auth_headers(TESTER_ID),
+        json={"application_note": "I can begin immediately."},
+    ).json()
+    pending = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/assignments",
+        headers=auth_headers(third_tester_id),
+        json={"application_note": "I can test next week."},
+    ).json()
+    assert (
+        client.post(
+            f"/api/v1/assignments/{active['id']}/accept",
+            headers=auth_headers(OWNER_ID),
+        ).status_code
+        == 200
+    )
+
+    paused = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/transition",
+        headers=auth_headers(OWNER_ID),
+        json={"action": "pause"},
+    )
+    assert paused.json()["status"] == "paused"
+    started = client.post(
+        f"/api/v1/assignments/{active['id']}/start",
+        headers=auth_headers(TESTER_ID),
+    )
+    assert started.status_code == 200, started.text
+    assert started.json()["status"] == "in_progress"
+
+    closed = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/transition",
+        headers=auth_headers(OWNER_ID),
+        json={"action": "close"},
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "cancelled"
+    assert (
+        client.get(f"/api/v1/assignments/{active['id']}", headers=auth_headers(TESTER_ID)).json()[
+            "status"
+        ]
+        == "in_progress"
+    )
+    assert (
+        client.get(
+            f"/api/v1/assignments/{pending['id']}", headers=auth_headers(third_tester_id)
+        ).json()["status"]
+        == "cancelled"
+    )
+
+    withdrawn = client.post(
+        f"/api/v1/assignments/{active['id']}/withdraw",
+        headers=auth_headers(TESTER_ID),
+    )
+    assert withdrawn.status_code == 200, withdrawn.text
+    assert withdrawn.json()["status"] == "cancelled"
+    owned_campaigns = client.get("/api/v1/campaigns/mine", headers=auth_headers(OWNER_ID)).json()
+    assert owned_campaigns[0]["status"] == "completed"
+
+
+def test_contract_duration_and_distinct_sessions_are_server_enforced(
+    client: TestClient,
+) -> None:
+    create_profile(client, OWNER_ID, "duration-owner")
+    create_profile(client, TESTER_ID, "duration-tester")
+    campaign_input = campaign_payload()
+    campaign_input["target_testers"] = 1
+    contract_input = contract_payload()
+    contract_input["minimum_duration_days"] = 1
+    contract_input["required_sessions"] = 2
+    campaign = client.post(
+        "/api/v1/campaigns/launch",
+        headers=auth_headers(OWNER_ID),
+        json={"campaign": campaign_input, "contract": contract_input},
+    ).json()
+    contract = client.get(
+        f"/api/v1/campaigns/{campaign['id']}/contract",
+        headers=auth_headers(OWNER_ID),
+    ).json()
+    assignment = client.post(
+        f"/api/v1/campaigns/{campaign['id']}/assignments",
+        headers=auth_headers(TESTER_ID),
+        json={"application_note": "I can complete a multi-day test."},
+    ).json()
+    assert (
+        client.post(
+            f"/api/v1/assignments/{assignment['id']}/accept",
+            headers=auth_headers(OWNER_ID),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/api/v1/assignments/{assignment['id']}/start",
+            headers=auth_headers(TESTER_ID),
+        ).status_code
+        == 200
+    )
+
+    sessions = client.get(
+        f"/api/v1/assignments/{assignment['id']}/sessions",
+        headers=auth_headers(TESTER_ID),
+    ).json()
+    assert len(sessions) == 1
+    duplicate_day = client.post(
+        f"/api/v1/assignments/{assignment['id']}/sessions",
+        headers=auth_headers(TESTER_ID),
+        json={"note": "Trying to count the same UTC day twice."},
+    )
+    assert duplicate_day.status_code == 409
+    assert duplicate_day.json()["detail"] == "A testing session is already recorded for today"
+
+    submission = client.post(
+        f"/api/v1/assignments/{assignment['id']}/submissions",
+        headers=auth_headers(TESTER_ID),
+        json={
+            "summary": "I tried to submit before the required participation period ended.",
+            "items": [
+                {
+                    "task_id": task["id"],
+                    "kind": "note",
+                    "note": f"Observed the required behavior for {task['title']}.",
+                }
+                for task in contract["tasks"]
+            ],
+        },
+    )
+    assert submission.status_code == 409
+    assert submission.json()["detail"] == "This contract requires 1 full days of testing"

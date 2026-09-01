@@ -1,14 +1,15 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from app.models.enums import (
     AssignmentStatus,
     CampaignStatus,
     ContractStatus,
     CreditEntryType,
+    DisputeRemedy,
     DisputeStatus,
     EvidenceKind,
     Platform,
@@ -24,6 +25,37 @@ class APIModel(BaseModel):
 class HealthRead(APIModel):
     status: str
     environment: str
+
+
+class CapabilitiesRead(APIModel):
+    is_moderator: bool
+
+
+class BetaStatusRead(APIModel):
+    enabled: bool
+    max_users: int
+    claimed_seats: int
+    remaining_seats: int
+    is_full: bool
+
+
+class WaitlistCreate(APIModel):
+    email: str = Field(min_length=5, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        local, separator, domain = normalized.rpartition("@")
+        if not separator or not local or "." not in domain or domain.startswith("."):
+            raise ValueError("Enter a valid email address")
+        return normalized
+
+
+class WaitlistRead(APIModel):
+    id: UUID
+    email: str
+    created_at: datetime
 
 
 class ProfileUpsert(APIModel):
@@ -42,6 +74,24 @@ class ProfileRead(APIModel):
     avatar_url: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class ModerationParticipantRead(ProfileRead):
+    is_suspended: bool
+    suspended_at: datetime | None
+    suspension_reason: str | None
+
+
+class ParticipantSuspension(APIModel):
+    reason: str = Field(min_length=10, max_length=500)
+
+
+class PublicProfileRead(APIModel):
+    id: UUID
+    username: str
+    display_name: str
+    bio: str | None
+    avatar_url: str | None
 
 
 class CampaignCreate(APIModel):
@@ -66,9 +116,14 @@ class CampaignUpdate(APIModel):
     reward_credits: int | None = Field(default=None, ge=1, le=1000)
 
 
+class CampaignTransition(APIModel):
+    action: Literal["pause", "resume", "close"]
+
+
 class CampaignRead(APIModel):
     id: UUID
     owner_id: UUID
+    owner_profile: PublicProfileRead
     name: str
     slug: str
     platform: Platform
@@ -104,7 +159,14 @@ class ContractUpsert(APIModel):
     device_requirements: str | None = Field(default=None, max_length=4000)
     evidence_requirements: str = Field(min_length=10, max_length=4000)
     review_window_hours: int = Field(default=72, ge=1, le=720)
+    minimum_duration_days: int = Field(default=0, ge=0, le=90)
+    required_sessions: int = Field(default=1, ge=1, le=30)
     tasks: list[ContractTaskInput] = Field(min_length=1, max_length=25)
+
+
+class CampaignLaunch(APIModel):
+    campaign: CampaignCreate
+    contract: ContractUpsert
 
 
 class ContractRead(APIModel):
@@ -116,6 +178,8 @@ class ContractRead(APIModel):
     device_requirements: str | None
     evidence_requirements: str
     review_window_hours: int
+    minimum_duration_days: int
+    required_sessions: int
     status: ContractStatus
     locked_at: datetime | None
     tasks: list[ContractTaskRead]
@@ -129,6 +193,7 @@ class AssignmentRead(APIModel):
     id: UUID
     campaign_id: UUID
     tester_id: UUID
+    tester_profile: PublicProfileRead
     application_note: str | None
     status: AssignmentStatus
     accepted_at: datetime | None
@@ -137,6 +202,18 @@ class AssignmentRead(APIModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class TestingSessionCreate(APIModel):
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TestingSessionRead(APIModel):
+    id: UUID
+    assignment_id: UUID
+    session_date: date
+    note: str | None
+    created_at: datetime
 
 
 class EvidenceItemCreate(APIModel):
@@ -202,6 +279,18 @@ class MessageRead(APIModel):
     created_at: datetime
 
 
+class NotificationRead(APIModel):
+    id: UUID
+    user_id: UUID
+    kind: str
+    title: str
+    body: str
+    entity_type: str
+    entity_id: UUID
+    read_at: datetime | None
+    created_at: datetime
+
+
 class ReviewCreate(APIModel):
     decision: ReviewDecision
     notes: str = Field(min_length=5, max_length=8000)
@@ -250,6 +339,7 @@ class DisputeRead(APIModel):
     assigned_to: UUID | None
     assigned_at: datetime | None
     resolution: str | None
+    remedy: DisputeRemedy | None
     resolved_by: UUID | None
     resolved_at: datetime | None
     created_at: datetime
@@ -258,7 +348,14 @@ class DisputeRead(APIModel):
 
 class DisputeResolve(APIModel):
     outcome: Literal["resolved", "rejected"]
+    remedy: DisputeRemedy = DisputeRemedy.NONE
     resolution: str = Field(min_length=20, max_length=8000)
+
+    @model_validator(mode="after")
+    def validate_remedy(self) -> "DisputeResolve":
+        if self.outcome == "rejected" and self.remedy != DisputeRemedy.NONE:
+            raise ValueError("Rejected disputes cannot apply a remedy")
+        return self
 
 
 class AuditEventRead(APIModel):

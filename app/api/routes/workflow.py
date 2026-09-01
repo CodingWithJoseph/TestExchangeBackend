@@ -5,12 +5,13 @@ from fastapi import APIRouter, status
 from app.api.deps import DBSession
 from app.api.routes.campaigns import contract_response
 from app.core.auth import AuthenticatedUser
-from app.models import Assignment, Dispute, Message, Review
+from app.models import Assignment, Campaign, Dispute, Message, Review, TestingSession
 from app.models.enums import AssignmentStatus
 from app.schemas.api import (
     AssignmentApply,
     AssignmentRead,
     AuditEventRead,
+    CampaignRead,
     ContractRead,
     DisputeCreate,
     DisputeRead,
@@ -22,6 +23,8 @@ from app.schemas.api import (
     ReviewRead,
     SubmissionCreate,
     SubmissionRead,
+    TestingSessionCreate,
+    TestingSessionRead,
 )
 from app.services.common import (
     DomainError,
@@ -36,14 +39,18 @@ from app.services.workflow import (
     apply_to_campaign,
     create_review,
     create_submission,
+    decline_assignment,
     get_submission,
     list_messages,
     list_submission_reviews,
     list_submissions,
+    list_testing_sessions,
     list_user_assignments,
     list_user_disputes,
     open_dispute,
+    record_testing_session,
     start_assignment,
+    withdraw_assignment,
 )
 
 router = APIRouter(tags=["testing workflow"])
@@ -88,6 +95,16 @@ def assignment(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> A
     return record
 
 
+@router.get("/assignments/{assignment_id}/campaign", response_model=CampaignRead)
+def assignment_campaign(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> Campaign:
+    record = get_assignment(db, assignment_id)
+    require_assignment_participant(db, record, user.id)
+    campaign = db.get(Campaign, record.campaign_id)
+    if campaign is None:
+        raise DomainError("Campaign not found", 404)
+    return campaign
+
+
 @router.get("/assignments/{assignment_id}/contract", response_model=ContractRead)
 def assignment_contract(
     assignment_id: UUID, user: AuthenticatedUser, db: DBSession
@@ -104,9 +121,48 @@ def accept(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> Assig
     return accept_assignment(db, assignment_id=assignment_id, owner_id=user.id)
 
 
+@router.post("/assignments/{assignment_id}/decline", response_model=AssignmentRead)
+def decline(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> Assignment:
+    return decline_assignment(db, assignment_id=assignment_id, owner_id=user.id)
+
+
+@router.post("/assignments/{assignment_id}/withdraw", response_model=AssignmentRead)
+def withdraw(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> Assignment:
+    return withdraw_assignment(db, assignment_id=assignment_id, tester_id=user.id)
+
+
 @router.post("/assignments/{assignment_id}/start", response_model=AssignmentRead)
 def start(assignment_id: UUID, user: AuthenticatedUser, db: DBSession) -> Assignment:
     return start_assignment(db, assignment_id=assignment_id, tester_id=user.id)
+
+
+@router.get(
+    "/assignments/{assignment_id}/sessions",
+    response_model=list[TestingSessionRead],
+)
+def testing_sessions(
+    assignment_id: UUID, user: AuthenticatedUser, db: DBSession
+) -> list[TestingSession]:
+    return list_testing_sessions(db, assignment_id=assignment_id, user_id=user.id)
+
+
+@router.post(
+    "/assignments/{assignment_id}/sessions",
+    response_model=TestingSessionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def testing_session(
+    assignment_id: UUID,
+    payload: TestingSessionCreate,
+    user: AuthenticatedUser,
+    db: DBSession,
+) -> TestingSession:
+    return record_testing_session(
+        db,
+        assignment_id=assignment_id,
+        tester_id=user.id,
+        payload=payload,
+    )
 
 
 @router.post(
