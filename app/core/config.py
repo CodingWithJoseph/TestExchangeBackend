@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     rate_limit_read_requests: int = Field(default=120, ge=1, le=10000)
     rate_limit_write_requests: int = Field(default=30, ge=1, le=10000)
     moderator_user_ids: list[UUID] = Field(default_factory=list)
+    sentry_dsn: str | None = None
+    sentry_release: str | None = None
+    sentry_traces_sample_rate: float = Field(default=0.05, ge=0, le=1)
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
@@ -51,6 +54,8 @@ class Settings(BaseSettings):
             problems.append("CORS_ORIGINS cannot contain localhost")
         if not self.moderator_user_ids:
             problems.append("MODERATOR_USER_IDS must contain at least one moderator")
+        if not self.sentry_dsn:
+            problems.append("SENTRY_DSN is required")
         if problems:
             raise ValueError("Unsafe production configuration: " + "; ".join(problems))
         return self

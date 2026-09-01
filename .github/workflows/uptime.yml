@@ -1,0 +1,22 @@
+name: API uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    if: ${{ vars.UPTIME_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check readiness endpoint
+        env:
+          UPTIME_URL: ${{ vars.UPTIME_URL }}
+        run: |
+          response="$(curl --fail --silent --show-error --retry 2 --retry-all-errors --max-time 15 "$UPTIME_URL")"
+          printf '%s\n' "$response" | jq --exit-status '.status == "ready"' > /dev/null

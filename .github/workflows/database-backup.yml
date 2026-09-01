@@ -1,0 +1,51 @@
+name: Database backup
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    if: ${{ vars.BACKUPS_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install backup clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+          python -m pip install --upgrade awscli
+      - name: Create database archive
+        id: archive
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_DIR: ${{ runner.temp }}/testexchange-backups
+        run: |
+          archive_path="$(bash scripts/backup_postgres.sh)"
+          echo "archive_path=$archive_path" >> "$GITHUB_OUTPUT"
+      - name: Upload private archive
+        env:
+          ARCHIVE_PATH: ${{ steps.archive.outputs.archive_path }}
+          BACKUP_S3_URI: ${{ vars.BACKUP_S3_URI }}
+          BACKUP_S3_ENDPOINT_URL: ${{ vars.BACKUP_S3_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.BACKUP_AWS_REGION }}
+        run: |
+          : "${BACKUP_S3_URI:?BACKUP_S3_URI is required}"
+          export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}"
+          endpoint_args=()
+          if [[ -n "$BACKUP_S3_ENDPOINT_URL" ]]; then
+            endpoint_args+=(--endpoint-url "$BACKUP_S3_ENDPOINT_URL")
+          fi
+          destination="${BACKUP_S3_URI%/}/$(basename "$ARCHIVE_PATH")"
+          aws "${endpoint_args[@]}" s3 cp "$ARCHIVE_PATH" "$destination" --sse AES256
+          aws "${endpoint_args[@]}" s3 cp "${ARCHIVE_PATH}.sha256" "${destination}.sha256" --sse AES256

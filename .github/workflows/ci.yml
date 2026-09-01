@@ -43,6 +43,17 @@ jobs:
       - run: pytest tests/test_postgres_concurrency.py
         env:
           TEST_DATABASE_URL: postgresql://testexchange:testexchange@127.0.0.1:5432/testexchange
+      - name: Test database backup restoration
+        env:
+          DATABASE_URL: postgresql://testexchange:testexchange@127.0.0.1:5432/testexchange
+          ADMIN_DATABASE_URL: postgresql://testexchange:testexchange@127.0.0.1:5432/postgres
+          RESTORE_DATABASE_URL: postgresql://testexchange:testexchange@127.0.0.1:5432/testexchange_restore
+          RESTORE_DATABASE_NAME: testexchange_restore
+          BACKUP_DIR: ${{ runner.temp }}/testexchange-backups
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client
+          bash scripts/test_backup_restore.sh
       - run: alembic downgrade base
         env:
           DATABASE_URL: postgresql://testexchange:testexchange@127.0.0.1:5432/testexchange
