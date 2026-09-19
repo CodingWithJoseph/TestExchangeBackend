@@ -1,7 +1,7 @@
 from functools import lru_cache
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     database_url: str = "sqlite:///./testexchange.db"
     supabase_url: str | None = None
+    supabase_service_role_key: SecretStr | None = None
     supabase_jwt_audience: str = "authenticated"
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     signup_credit_grant: int = Field(default=24, ge=0, le=10000)

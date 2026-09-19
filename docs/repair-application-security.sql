@@ -1,0 +1,38 @@
+-- Run as an application-table owner in Supabase SQL Editor.
+-- Mandatory repair for databases stamped before d82e41f6a903.
+begin;
+alter table public.profiles enable row level security;
+revoke all on table public.profiles from anon, authenticated;
+alter table public.campaigns enable row level security;
+revoke all on table public.campaigns from anon, authenticated;
+alter table public.testing_contracts enable row level security;
+revoke all on table public.testing_contracts from anon, authenticated;
+alter table public.contract_tasks enable row level security;
+revoke all on table public.contract_tasks from anon, authenticated;
+alter table public.assignments enable row level security;
+revoke all on table public.assignments from anon, authenticated;
+alter table public.evidence_submissions enable row level security;
+revoke all on table public.evidence_submissions from anon, authenticated;
+alter table public.evidence_items enable row level security;
+revoke all on table public.evidence_items from anon, authenticated;
+alter table public.messages enable row level security;
+revoke all on table public.messages from anon, authenticated;
+alter table public.reviews enable row level security;
+revoke all on table public.reviews from anon, authenticated;
+alter table public.credit_accounts enable row level security;
+revoke all on table public.credit_accounts from anon, authenticated;
+alter table public.credit_ledger_entries enable row level security;
+revoke all on table public.credit_ledger_entries from anon, authenticated;
+alter table public.disputes enable row level security;
+revoke all on table public.disputes from anon, authenticated;
+alter table public.audit_events enable row level security;
+revoke all on table public.audit_events from anon, authenticated;
+alter table public.testing_sessions enable row level security;
+revoke all on table public.testing_sessions from anon, authenticated;
+alter table public.notifications enable row level security;
+revoke all on table public.notifications from anon, authenticated;
+alter table public.beta_program_state enable row level security;
+revoke all on table public.beta_program_state from anon, authenticated;
+alter table public.waitlist_entries enable row level security;
+revoke all on table public.waitlist_entries from anon, authenticated;
+commit;

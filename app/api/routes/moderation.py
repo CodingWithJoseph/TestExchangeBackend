@@ -1,10 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.api.deps import DBSession
 from app.core.auth import ModeratorUser
+from app.core.config import Settings, get_settings
 from app.models import Dispute, Profile, WaitlistEntry
 from app.models.enums import DisputeStatus
 from app.schemas.api import (
@@ -24,6 +25,7 @@ from app.schemas.api import (
     SubmissionRead,
     WaitlistRead,
 )
+from app.services.evidence import moderator_evidence_url
 from app.services.moderation import (
     ModerationCase,
     claim_dispute,
@@ -39,6 +41,28 @@ from app.services.profiles import (
 )
 
 router = APIRouter(prefix="/moderation", tags=["moderation"])
+
+
+@router.post("/disputes/{dispute_id}/evidence/{evidence_id}/url")
+def evidence_url(
+    dispute_id: UUID,
+    evidence_id: UUID,
+    user: ModeratorUser,
+    db: DBSession,
+    settings: Annotated[Settings, Depends(get_settings)],
+    response: Response,
+) -> dict[str, str | int]:
+    response.headers["Cache-Control"] = "no-store"
+    return {
+        "url": moderator_evidence_url(
+            db,
+            dispute_id=dispute_id,
+            evidence_id=evidence_id,
+            moderator_id=user.id,
+            settings=settings,
+        ),
+        "expires_in": 60,
+    }
 
 
 def case_response(case: ModerationCase) -> ModerationDisputeCaseRead:

@@ -22,6 +22,7 @@ from app.models.enums import (
     AssignmentStatus,
     CampaignStatus,
     CreditEntryType,
+    DisputeStatus,
     ReviewDecision,
     SubmissionStatus,
 )
@@ -513,18 +514,34 @@ def list_submission_reviews(db: Session, *, submission_id: UUID, user_id: UUID) 
 def create_review(
     db: Session, *, submission_id: UUID, reviewer_id: UUID, payload: ReviewCreate
 ) -> Review:
+    assignment_id = db.scalar(
+        select(EvidenceSubmission.assignment_id).where(EvidenceSubmission.id == submission_id)
+    )
+    if assignment_id is None:
+        raise DomainError("Submission not found", 404)
+    # Serialize owner decisions with tester escalations and moderator decisions.
+    assignment = db.scalar(
+        select(Assignment).where(Assignment.id == assignment_id).with_for_update()
+    )
     submission = db.scalar(
         select(EvidenceSubmission).where(EvidenceSubmission.id == submission_id).with_for_update()
     )
     if submission is None:
         raise DomainError("Submission not found", 404)
-    assignment = get_assignment(db, submission.assignment_id)
     campaign = db.scalar(
         select(Campaign).where(Campaign.id == assignment.campaign_id).with_for_update()
     )
     if campaign is None:
         raise DomainError("Campaign not found", 404)
     require_campaign_owner(campaign, reviewer_id)
+    active_dispute = db.scalar(
+        select(Dispute.id).where(
+            Dispute.assignment_id == assignment.id,
+            Dispute.status.in_([DisputeStatus.OPEN, DisputeStatus.UNDER_REVIEW]),
+        )
+    )
+    if active_dispute is not None:
+        raise DomainError("A moderator is handling this submission's escalation", 409)
     if submission.status != SubmissionStatus.SUBMITTED:
         raise DomainError("This submission has already been reviewed", 409)
     if assignment.status != AssignmentStatus.SUBMITTED:
@@ -639,15 +656,24 @@ def open_dispute(
         raise DomainError("Assignment not found", 404)
     require_assignment_participant(db, assignment, opened_by)
     if assignment.tester_id != opened_by:
-        raise DomainError("Only the tester can dispute a rejected submission", 403)
-    if assignment.status != AssignmentStatus.REJECTED:
-        raise DomainError("Only a rejected assignment can be disputed", 409)
+        raise DomainError("Only the tester can request a moderator review", 403)
+    if assignment.status not in {AssignmentStatus.REJECTED, AssignmentStatus.SUBMITTED}:
+        raise DomainError("Only rejected or overdue submissions can be escalated", 409)
     if payload.submission_id is None:
-        raise DomainError("A rejected submission is required", 422)
+        raise DomainError("A submission is required", 422)
     submission = db.get(EvidenceSubmission, payload.submission_id)
     if submission is None or submission.assignment_id != assignment_id:
         raise DomainError("The submission does not belong to this assignment", 422)
-    if submission.status != SubmissionStatus.REJECTED:
+    if assignment.status == AssignmentStatus.SUBMITTED:
+        if submission.status != SubmissionStatus.SUBMITTED:
+            raise DomainError("Only the current pending submission can be escalated", 409)
+        contract, _ = _contract_for_assignment(db, assignment)
+        submitted_at = submission.submitted_at
+        if submitted_at.tzinfo is None:
+            submitted_at = submitted_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) < submitted_at + timedelta(hours=contract.review_window_hours):
+            raise DomainError("The owner's review window has not ended yet", 409)
+    elif submission.status != SubmissionStatus.REJECTED:
         raise DomainError("Only a rejected submission can be disputed", 409)
     existing = db.scalar(select(Dispute.id).where(Dispute.assignment_id == assignment_id))
     if existing is not None:
