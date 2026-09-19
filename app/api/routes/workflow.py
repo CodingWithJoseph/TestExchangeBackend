@@ -6,7 +6,6 @@ from app.api.deps import DBSession
 from app.api.routes.campaigns import contract_response
 from app.core.auth import AuthenticatedUser
 from app.models import Assignment, Campaign, Dispute, Message, Review, TestingSession
-from app.models.enums import AssignmentStatus
 from app.schemas.api import (
     AssignmentApply,
     AssignmentRead,
@@ -111,7 +110,7 @@ def assignment_contract(
 ) -> ContractRead:
     record = get_assignment(db, assignment_id)
     require_assignment_participant(db, record, user.id)
-    if user.id == record.tester_id and record.status == AssignmentStatus.APPLIED:
+    if user.id == record.tester_id and record.accepted_at is None:
         raise DomainError("The private testing contract unlocks after acceptance", 403)
     return contract_response(db, record.campaign_id)
 

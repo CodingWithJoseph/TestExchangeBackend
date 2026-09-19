@@ -65,10 +65,6 @@ def _install_supabase_safeguards() -> None:
     if not (_postgres_role_exists("anon") and _postgres_role_exists("authenticated")):
         return
 
-    for table in APP_TABLES:
-        op.execute(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY')
-        op.execute(f'REVOKE ALL ON TABLE public."{table}" FROM anon, authenticated')
-
     if not _postgres_relation_exists("storage", "objects"):
         return
 
@@ -195,6 +191,12 @@ def upgrade() -> None:
         batch_op.create_index("ix_disputes_assigned_to", ["assigned_to"], unique=False)
 
     if op.get_bind().dialect.name == "postgresql":
+        # Mandatory application security must survive optional Storage setup failures.
+        for table in APP_TABLES:
+            op.execute(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY')
+            for role in ("anon", "authenticated"):
+                if _postgres_role_exists(role):
+                    op.execute(f'REVOKE ALL ON TABLE public."{table}" FROM {role}')
         # Supabase's managed Storage tables may be owned by an internal role that is not
         # available through the project's pooled DATABASE_URL. Keep the application migration
         # usable in that case and apply docs/supabase-storage-policies.sql from the Supabase SQL

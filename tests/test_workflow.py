@@ -258,7 +258,7 @@ def test_complete_private_testing_workflow(client: TestClient) -> None:
         },
     )
     assert response.status_code == 409
-    assert response.json()["detail"] == "Only a rejected assignment can be disputed"
+    assert response.json()["detail"] == "Only rejected or overdue submissions can be escalated"
 
 
 def test_profile_username_and_campaign_ownership_are_enforced(client: TestClient) -> None:

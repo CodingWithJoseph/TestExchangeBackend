@@ -172,11 +172,24 @@ def resolve_dispute(
     if assignment is None:
         raise DomainError("Assignment not found", 404)
 
+    if (
+        assignment.status == AssignmentStatus.SUBMITTED
+        and payload.remedy != DisputeRemedy.AWARD_TESTER
+    ):
+        if payload.outcome != "rejected":
+            raise DomainError("An overdue submission must be approved or rejected", 422)
+        submission = db.get(EvidenceSubmission, dispute.submission_id)
+        if submission is None or submission.assignment_id != assignment.id:
+            raise DomainError("The disputed submission was not found", 409)
+        submission.status = SubmissionStatus.REJECTED
+        assignment.status = AssignmentStatus.REJECTED
+        assignment.completed_at = datetime.now(UTC)
+
     if payload.remedy == DisputeRemedy.AWARD_TESTER:
         if dispute.submission_id is None:
             raise DomainError("This dispute has no submission to approve", 409)
-        if assignment.status != AssignmentStatus.REJECTED:
-            raise DomainError("Only a rejected assignment can receive a dispute award", 409)
+        if assignment.status not in {AssignmentStatus.REJECTED, AssignmentStatus.SUBMITTED}:
+            raise DomainError("Only rejected or overdue work can receive a dispute award", 409)
         submission = db.scalar(
             select(EvidenceSubmission)
             .where(EvidenceSubmission.id == dispute.submission_id)
